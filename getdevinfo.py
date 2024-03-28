@@ -1,10 +1,13 @@
-import platform
-import wmi
-import hashlib
+import platform, wmi, hashlib, subprocess, os, re, json
 from math import ceil
 from GPUtil import getGPUs
 from socket import gethostbyname
-import json
+
+
+def str_process(text):
+    pattern = r'[^a-zA-Z0-9\s]'
+    cleaned_text = re.sub(pattern, '', text)
+    return cleaned_text.lower()
 
 def get_sys_info():
     c = wmi.WMI()
@@ -51,11 +54,19 @@ def get_total_cpu_cores():
         total_cpu_cores += processor.NumberOfCores
     return total_cpu_cores
 
-
+def mainboard_info(info: str) -> str:
+    cmd = "wmic baseboard get " + info
+    run_cmd = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    raw_output = run_cmd.stdout.read().decode().strip().split()
+    output = " ".join(raw_output[1:]).strip()
+    return output
 def get_motherboard_hwid():
-    c = wmi.WMI()
-    motherboards = c.Win32_BaseBoard()
-    return motherboards[0].SerialNumber.strip()
+    try:
+        output = mainboard_info("serialnumber")
+        if output.lower() == "default string":
+            return mainboard_info("product")
+    except:
+        return None
 
 
 def get_graphics_card_model():
@@ -68,10 +79,15 @@ def get_graphics_card_model():
 
 
 def get_bios_hwid():
-    c = wmi.WMI()
-    bios = c.Win32_BIOS()[0]
-    return bios.SerialNumber
-
+    if 'nt' in os.name:
+        # Windows: Use the Windows API to get the computer's permanent UUID
+        output = subprocess.Popen('wmic csproduct get uuid', shell=True, stdout=subprocess.PIPE)
+        uuid_str = output.stdout.read().decode().strip()
+    else:
+        # Linux: Use dmidecode to get the system UUID
+        output = subprocess.Popen('dmidecode -s system-uuid', shell=True, stdout=subprocess.PIPE)
+        uuid_str = output.stdout.read().decode().strip()
+    return uuid_str.split()[1]
 
 def get_windows_uuid():
     c = wmi.WMI()
@@ -195,27 +211,21 @@ def get_device_infomation():
     hostname = get_sys_info()['Host name']
 
     hwid = ""
-    hwid += str(hostname)
     hwid += str(disk_model)
     hwid += str(disk_hwid)
     hwid += str(cpu_vendor)
     hwid += str(cpu_id)
-    hwid += str(cpu_scores)
-    hwid += str(ram)
-    hwid += str(ram_speed)
-    hwid += str(gpu)
-    hwid += str(gpu_vram)
     hwid += str(gpu_uuid)
     hwid += str(bios)
     hwid += str(motherboard_hwid)
     hwid += str(windows_uuid)
     hwid += str(mac_address)
-
+    hwid = str_process(hwid)
     hwid = hashlib.sha256(hwid.encode()).hexdigest()
 
 
     hwid = hwid.upper()
-    hwid = '-'.join(hwid[i:i + 8] for i in range(0, len(hwid), 8))
+    hwid = ''.join(hwid[i:i + 8] for i in range(0, len(hwid), 8)).lower()
     return {
         'System': system,
         'CPU': {
@@ -245,10 +255,10 @@ def get_device_infomation():
 
 def main():
     device_info = get_device_infomation()
-    print(device_info)
     with open('systeminformation.mmologin', 'w') as file:
         file.write(json.dumps(get_device_infomation()))
         file.close()
+    print(device_info)
 if __name__ =="__main__":
     main()
     input("Press Enter to exit...")
